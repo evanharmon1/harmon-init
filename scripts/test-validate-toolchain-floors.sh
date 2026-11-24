@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-validate-toolchain-floors.sh — unit-test validate-toolchain-floors.sh
-# against a throwaway fixture repository: the real tree passes, and every way a
+# against a throwaway fixture repository: rendered YAML fixtures and one Copier
+# render cover workflow pins, and every way a
 # floor can fail (a pin below it, a missing or unmatched template_path, a copier
 # floor above _min_copier_version, an ancestor floor the pinned commit does not
 # descend from or that git cannot see) fails closed. Run via
@@ -19,81 +20,39 @@ fail() {
 work="$(mktemp -d "${TMPDIR:-/tmp}/toolchain-floors-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 fx="${work}/fx"
+rendered="${work}/rendered"
 out="${work}/out.txt"
 
-check_step_inventory() {
-    node --input-type=module - "$1" <<'NODE'
-import { spawnSync } from 'node:child_process'
-import fs from 'node:fs'
-import path from 'node:path'
-
-const [root] = process.argv.slice(2)
-const actions = new Map([['actions/setup-node', 'node'], ['arduino/setup-task', 'task']])
-const { floors } = JSON.parse(fs.readFileSync(path.join(root, 'toolchain-floors.json'), 'utf8'))
-const workflowDir = 'template/.github/workflows'
-const workflows = fs.readdirSync(path.join(root, workflowDir), { withFileTypes: true })
-  .filter((entry) => entry.isFile())
-  .map((entry) => path.join(workflowDir, entry.name))
-const files = ['template/.github/actions/setup/action.yml.jinja', ...workflows]
-
-for (const file of files) {
-  const source = fs.readFileSync(path.join(root, file), 'utf8')
-  // Only candidate files need parsing. The YAML steps, not the version
-  // patterns or the declared pin paths, determine which actions are present.
-  if (![...actions.keys()].some((action) => source.toLowerCase().includes(action))) continue
-  const yaml = source.replace(/^ *\[%.*%\] *\r?$/gm, '').replace(/\[\[[^\r\n]*?\]\]/g, 'JINJA')
-  const result = spawnSync('yq', ['-o=json', '-I=0', `
-    [(.runs.steps[]?, .jobs[].steps[]?)
-      | explode(.)
-      | select(tag == "!!map")
-      | .uses | select(tag == "!!str") | downcase | split("@") | .[0]]
-  `, '-'], { input: yaml, encoding: 'utf8' })
-  if (result.status !== 0) {
-    console.error(`cannot inventory setup steps in ${file}: ${result.error?.message ?? result.stderr.trim()}`)
-    process.exitCode = 1
-    continue
-  }
-  for (const action of new Set(JSON.parse(result.stdout))) {
-    const tool = actions.get(action)
-    if (!tool) continue
-    const floor = floors.find((entry) => entry.tool === tool)
-    if (!floor?.pins.some((pin) => pin.template_path === file && pin.step?.action === action)) {
-      console.error(`${file}: undeclared ${action} step in the ${tool} floor`)
-      process.exitCode = 1
-    }
-  }
-}
-NODE
-}
-
-# The real tree runs FIRST, with the caller's own Git configuration: a devcontainer
-# bind mount can depend on a global safe.directory entry, and only the throwaway
-# fixture below may discard it.
-# The nested run (below) has the scrubbed Git config; the outer run already checked the real tree.
+# Run the published declaration checks and the end-to-end Copier fixture once; the
+# nested invocation checks that the offline validator fixtures isolate Git.
 if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
-    echo "==> the real tree passes and names its consumer-checked pin"
-    rc=0
-    "$validator" >"$out" 2>&1 || rc=$?
-    [ "$rc" = 0 ] || {
-        cat "$out" >&2
-        fail "the current template violates its own floors"
+    check_published_tools() {
+        local tools
+        tools="$(jq -ce '[.floors[].tool] | sort' "$1")" || return 1
+        [ "$tools" = '["copier","devcontainer-image","node","pnpm","task"]' ]
     }
-    grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
-    check_step_inventory "$repo" || fail "the template has a workflow or shared setup action outside the declared step pins"
-    tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
-    [ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
+    check_published_tools toolchain-floors.json || fail "the published tool list differs from the expected tools"
+    jq 'del(.floors[] | select(.tool == "copier"))' toolchain-floors.json >"$work/missing-tool.json"
+    if check_published_tools "$work/missing-tool.json"; then
+        fail "the published tool list check accepted a missing Copier entry"
+    fi
+
+    pnpm_pin="$(jq -ce '.floors[] | select(.tool == "pnpm") | .pins[] | select(.template_path == null and .path == "package.json")' toolchain-floors.json)"
     # The published pnpm locator, applied to representative packageManager values.
-    pnpm_pointer="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].json_pointer)')"
-    pnpm_path="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].path)')"
-    [ "$pnpm_path" = "package.json" ] || fail "the pnpm pin must name package.json, got ${pnpm_path}"
+    pnpm_pointer="$(jq -r .json_pointer <<<"$pnpm_pin")"
+    pnpm_pattern="$(jq -r .pattern <<<"$pnpm_pin")"
     [ "$pnpm_pointer" = "/packageManager" ] || fail "the pnpm pin must locate /packageManager, got ${pnpm_pointer}"
-    for value in 'pnpm@11.2.0' 'pnpm@11.2.0-rc.1' 'pnpm@11.2.0+sha512.abc123' 'pnpm@11.2.0-rc.1+sha512.abc123'; do
-        major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
+    capture_major() {
+        node -e 'const m=new RegExp(process.argv[1]).exec(process.argv[2]);process.stdout.write(m?m[1]:"")' "$pnpm_pattern" "$1"
+    }
+    for value in 'pnpm@11.2.0' 'pnpm@11.2.0-rc.1' 'pnpm@11.2.0+sha512.abc123' 'pnpm@11.2.0-rc.1+sha512.abc123' 'pnpm@11.2.0-rc.01beta'; do
+        major="$(capture_major "$value")"
         [ "$major" = "11" ] || fail "the pnpm pattern captured '${major}' from ${value}, want 11"
     done
     for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0' 'pnpm@11.' 'pnpm@11.not-a-version' \
-        'pnpm@11.2.0-' 'pnpm@11.2.0+' 'pnpm@11.2.0+sha512..abc123' 'pnpm@11.2.0+sha512/abc123'; do
-        major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
+        'pnpm@011.2.0' 'pnpm@11.02.0' 'pnpm@11.2.00' 'pnpm@11.2.0-01' 'pnpm@11.2.0-rc.01' \
+        'pnpm@11.2.0+sha512.not-hex' 'pnpm@11.2.0-' 'pnpm@11.2.0+' 'pnpm@11.2.0+sha512..abc123' 'pnpm@11.2.0+sha512/abc123'; do
+        major="$(capture_major "$value")"
         [ -z "$major" ] || fail "the pnpm pattern matched ${value}"
     done
 fi
@@ -186,13 +145,20 @@ EOF
 cp toolchain-floors.schema.json "${fx}/toolchain-floors.schema.json"
 
 # floors JSON -> write the fixture declaration with the given floor objects.
-floors() { printf '{"schema_version":1,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
-NODE_PATTERN="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="node");process.stdout.write(JSON.stringify(f.pins[0].pattern))')"
+floors() { printf '{"schema_version":2,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
+ACTION_PATH='template/.github/actions/setup/action.yml.jinja'
+NODE_WORKFLOW_PATH='template/.github/workflows/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja'
+TASK_WORKFLOW_PATH='template/.github/workflows/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja'
 declared_pin() {
-    node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool===process.argv[1]);process.stdout.write(JSON.stringify(f.pins[Number(process.argv[2])]))' "$1" "$2"
+    jq -ce --arg tool "$1" --arg file "$2" '.floors[] | select(.tool == $tool) | .pins[] | select(.template_path == $file)' toolchain-floors.json
 }
-NODE_PIN="$(declared_pin node 0)"
-TASK_PIN="$(declared_pin task 0)"
+NODE_PIN="$(declared_pin node "$ACTION_PATH")"
+NODE_PATTERN="$(jq -c .pattern <<<"$NODE_PIN")"
+TASK_PIN="$(declared_pin task "$ACTION_PATH")"
+mkdir -p "$rendered/.github/actions/setup" "$rendered/.github/workflows"
+ln -s "$fx/$ACTION_PATH" "$rendered/.github/actions/setup/action.yml"
+ln -s "$fx/$NODE_WORKFLOW_PATH" "$rendered/.github/workflows/devcontainer-build.yml"
+ln -s "$fx/$TASK_WORKFLOW_PATH" "$rendered/.github/workflows/release-content-guard.yml"
 IMAGE_PIN='{"path":".devcontainer/Dockerfile","template_path":"'"${JINJA_DIR}"'/Dockerfile","pattern":"^FROM ghcr\\.io/evanharmon1/harmon-devcontainer:sha-([0-9a-f]{40})@"}'
 node_floor() { printf '{"tool":"node","minimum":"%s","compare":"major","pins":[%s]}' "$1" "${2:-$NODE_PIN}"; }
 task_floor() { printf '{"tool":"task","minimum":"%s","compare":"version","pins":[%s]}' "$1" "${2:-$TASK_PIN}"; }
@@ -205,7 +171,7 @@ expect() {
     shift 3
     echo "==> ${name}"
     rc=0
-    "$validator" --root "$fx" "$@" >"$out" 2>&1 || rc=$?
+    "$validator" --rendered "$rendered" --root "$fx" "$@" >"$out" 2>&1 || rc=$?
     [ "$rc" = "$want" ] || {
         cat "$out" >&2
         fail "${name}: exit ${rc}, want ${want}"
@@ -232,6 +198,10 @@ floors "$(node_floor 24 '{"path":".github/action/setup/action.yml","template_pat
 expect "a consumer path that is not what template_path renders to fails" 1 "path is not what template/.github/actions/setup/action.yml.jinja renders to (.github/actions/setup/action.yml)"
 floors "$(node_floor 24 '{"path":"missing","template_path":"template/missing.jinja","pattern":"(x)"}')"
 expect "a template_path that does not exist fails" 1 "template/missing.jinja does not exist"
+unrendered_pin="$(jq -c '.path = "unused.yml" | .template_path = "template/unused.yml.jinja"' <<<"$NODE_PIN")"
+cp "$fx/$ACTION_PATH" "$fx/template/unused.yml.jinja"
+floors "$(node_floor 24 "$unrendered_pin")"
+expect "a template source with no rendered output fails" 1 "template/unused.yml.jinja is absent from every checked render"
 floors "$(node_floor 24 '{"path":"../outside","template_path":"../outside","pattern":"(x)"}')"
 expect "a template_path leaving the repository fails" 1 "leaves the repository"
 floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^nothing-here: ([0-9]+)$"}')"
@@ -278,10 +248,10 @@ expect "a pin value that is not a commit matches nothing and fails" 1 "pattern m
 write_dockerfile "$child"
 
 # `when` must name a boolean answer in copier.yml.
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"use_node","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"use_node","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "when naming a boolean answer passes" 0 "node (major >= 24, when use_node)"
 for bad in not_a_bool no_such_answer; do
-    printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$bad" "$NODE_PIN" >"${fx}/toolchain-floors.json"
+    printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$bad" "$NODE_PIN" >"${fx}/toolchain-floors.json"
     expect "when ${bad} fails" 1 "when \"${bad}\" is not a boolean answer in copier.yml"
 done
 floors "$(node_floor 24),$(node_floor 24)"
@@ -298,8 +268,10 @@ floors '{"tool":"node","minimum":"24","compare":"major"}'
 expect "a floor without pins fails the schema" 1 "does not match its schema"
 floors '{"tool":"node","minimum":"24","compare":"major","pins":[{"path":"a","pattern":"(x)"}]}'
 expect "a pin must say whether it is repository-owned" 1 "does not match its schema"
-printf '{"schema_version":2,"floors":[]}\n' >"${fx}/toolchain-floors.json"
-expect "an unsupported schema_version fails" 1 "does not match its schema"
+printf '{"schema_version":1,"floors":[%s]}\n' "$(node_floor 24)" >"${fx}/toolchain-floors.json"
+expect "schema v1 fails even with an otherwise valid declaration" 1 "does not match its schema"
+jq '.properties.schema_version.const = 1' "$fx/toolchain-floors.schema.json" >"$work/schema-v1.json"
+expect "a supplied schema cannot opt the validator back into v1" 1 "unsupported schema_version; expected 2" --schema "$work/schema-v1.json"
 printf '{not json\n' >"${fx}/toolchain-floors.json"
 expect "unreadable JSON fails" 1 "cannot read valid JSON"
 
@@ -318,9 +290,9 @@ floors "$(task_floor 3.51.1)"
 expect "the task pin is read from its own step" 0 ": 3.51.1 >= 3.51.1"
 grep -F "9.0.0" "$out" >/dev/null && fail "the pnpm action's version leaked into the task comparison"
 grep -F "1.0.0" "$out" >/dev/null && fail "a later action's version leaked into the task comparison"
-lookahead_task_pin="$(printf '%s' "$TASK_PIN" | jq -c '.pattern += "(?!\\n\\s*repo-token:)"')"
-floors "$(task_floor 3.51.1 "$lookahead_task_pin")"
-expect "a locator whose lookahead excludes the real next line fails" 1 "needs exactly one recognized version version"
+lookahead_node_pin="$(jq -c '.pattern += "(?!\\n\\s*- uses: arduino/)"' <<<"$NODE_PIN")"
+floors "$(node_floor 24 "$lookahead_node_pin")"
+expect "a whole-file locator whose lookahead excludes the real next line fails" 1 "needs exactly one recognized node-version version"
 
 # An empty pins list enforces nothing; only copier has a separate check.
 floors '{"tool":"node","minimum":"24","compare":"major","pins":[]}'
@@ -336,21 +308,21 @@ expect "a consumer-owned pattern needs a capture group" 1 "no capture group 1"
 
 # `when`: a trailing comment is fine; a type: line quoted inside help text is not a type.
 for ok in commented_bool quoted_bool; do
-    printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$ok" "$NODE_PIN" >"${fx}/toolchain-floors.json"
+    printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$ok" "$NODE_PIN" >"${fx}/toolchain-floors.json"
     expect "when ${ok} (type: bool with a trailing comment) passes" 0 "when ${ok}"
 done
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"help_trap","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"help_trap","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "when naming a question whose help text quotes type: bool fails" 1 'when "help_trap" is not a boolean answer'
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"hash_bool","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"hash_bool","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "type: bool#note is not the scalar bool" 1 'when "hash_bool" is not a boolean answer'
 
 # A relative --floors resolves against --root, not the caller's directory.
 mkdir -p "${work}/elsewhere"
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"99","compare":"major","pins":[%s]}]}\n' "$NODE_PIN" >"${work}/elsewhere/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"99","compare":"major","pins":[%s]}]}\n' "$NODE_PIN" >"${work}/elsewhere/toolchain-floors.json"
 floors "$(node_floor 24)"
 echo "==> a relative --floors resolves against --root"
 rc=0
-(cd "${work}/elsewhere" && "$validator" --root "$fx" --floors toolchain-floors.json >"$out" 2>&1) || rc=$?
+(cd "${work}/elsewhere" && "$validator" --rendered "$rendered" --root "$fx" --floors toolchain-floors.json >"$out" 2>&1) || rc=$?
 [ "$rc" = 0 ] || {
     cat "$out" >&2
     fail "a relative --floors read the caller's directory instead of --root"
@@ -362,7 +334,7 @@ decoy="${work}/decoy.git"
 git init -q --bare "$decoy"
 echo "==> a caller's GIT_DIR/GIT_INDEX_FILE does not retarget the ancestry check"
 rc=0
-GIT_DIR="$decoy" GIT_INDEX_FILE="${decoy}/index" "$validator" --root "$fx" >"$out" 2>&1 || rc=$?
+GIT_DIR="$decoy" GIT_INDEX_FILE="${decoy}/index" "$validator" --rendered "$rendered" --root "$fx" >"$out" 2>&1 || rc=$?
 [ "$rc" = 0 ] || {
     cat "$out" >&2
     fail "ancestry followed the caller's GIT_DIR"
@@ -379,7 +351,7 @@ echo "==> a shallow clone reports an unproven ancestry as unknown, not a rollbac
 write_dockerfile "$child"
 cp "${fx}/${JINJA_DIR}/Dockerfile" "${shallow}/${JINJA_DIR}/Dockerfile"
 rc=0
-"$validator" --root "$shallow" >"$out" 2>&1 || rc=$?
+"$validator" --rendered "$rendered" --root "$shallow" >"$out" 2>&1 || rc=$?
 [ "$rc" = 1 ] || fail "a shallow negative must fail, got exit ${rc}"
 grep -F "unknown — this clone is shallow" "$out" >/dev/null || {
     cat "$out" >&2
@@ -423,8 +395,8 @@ rm -f "${fx}/template/setup-node.yml.jinja"
 # Exercise the real workflow declarations against two jobs. A correct step
 # cannot cover an invalid sibling even across separate steps lists.
 WORKFLOW_DIR="${fx}/template/.github/workflows"
-NODE_WORKFLOW="${WORKFLOW_DIR}/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja"
-TASK_WORKFLOW="${WORKFLOW_DIR}/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja"
+NODE_WORKFLOW="$fx/$NODE_WORKFLOW_PATH"
+TASK_WORKFLOW="$fx/$TASK_WORKFLOW_PATH"
 mkdir -p "$WORKFLOW_DIR"
 two_jobs() {
     cat <<'EOF'
@@ -445,7 +417,7 @@ node_good='      - uses: actions/setup-node@0000
 task_good='      - uses: arduino/setup-task@0000
         with:
           version: 3.51.1'
-floors "$(node_floor 24 "$(declared_pin node 1)")"
+floors "$(node_floor 24 "$(declared_pin node "$NODE_WORKFLOW_PATH")")"
 two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
 expect "both Node workflow steps pass independently" 0 "toolchain-floors: ok"
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both Node versions must be compared"
@@ -483,38 +455,47 @@ two_jobs '      - &setup_node
           node-version: "24"' '      - *setup_node' >"$NODE_WORKFLOW"
 expect "a Node step referenced by an alias is still counted" 0 "toolchain-floors: ok"
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "the Node step and its alias must both be compared"
+two_jobs '      - uses: actions/setup-node@0000
+        with: &node_inputs
+          node-version: "24"' '      - uses: actions/setup-node@0000
+        with: *node_inputs' >"$NODE_WORKFLOW"
+expect "a Node version from the selected with alias is recognized" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both steps using the anchored version must be compared"
+cat >"$NODE_WORKFLOW" <<'EOF'
+jobs:
+  fixture:
+    strategy:
+      matrix:
+        shared: &shared_steps
+          - uses: actions/setup-node@v6
+            with:
+              node-version: "24"
+    steps: *shared_steps
+EOF
+expect "an aliased steps list from a job matrix is recognized" 0 ": 24 >= 24"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
           node-version-file: .nvmrc' >"$NODE_WORKFLOW"
 expect "one node-version-file step fails beside a valid Node step" 1 "needs exactly one node-version input (found 0)"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
-[% if use_node %]
-          node-version: "24"
-[% endif %]' >"$NODE_WORKFLOW"
-expect "a Jinja control between uses and node-version fails" 1 "Jinja control prevents verifying"
-two_jobs "$node_good" '      - uses: actions/setup-node@0000
+          node-version:
+            "24.21.0"' >"$NODE_WORKFLOW"
+expect "a version on the line after its key is recognized at its value position" 0 '[rendered]:12:13: 24 >= 24'
+for invalid in '024.21.0' '24.021.0' '24.21.00'; do
+    two_jobs "$node_good" "      - uses: actions/setup-node@0000
         with:
-[% if use_node %]
-          node-version: "24"
-[% else %]
-          node-version-file: .nvmrc
-[% endif %]' >"$NODE_WORKFLOW"
-expect "alternative version inputs under Jinja if and else fail" 1 "Jinja control prevents verifying"
-two_jobs "$node_good" '      -
-[% if use_node %]
-        uses: actions/setup-node@0000
-[% endif %]
+          node-version: "$invalid"" >"$NODE_WORKFLOW"
+    expect "Node rejects leading zero in $invalid" 1 "needs exactly one recognized node-version version"
+done
+two_jobs "$node_good" '      - uses: "actions/\x73etup-node@0000"
         with:
-          node-version: "24"' >"$NODE_WORKFLOW"
-expect "a Jinja control wrapping uses after a standalone step dash fails" 1 "Jinja control prevents verifying"
-two_jobs "$node_good" '      - uses: actions/setup-node@0000
+          node-version-file: .nvmrc' >"$NODE_WORKFLOW"
+expect "an escaped action name still needs its own version" 1 "needs exactly one node-version input (found 0)"
+two_jobs "$node_good" '      - uses: actions/setup-node/.@0000
         with:
-          node-version: "24"
-[% if use_node %]
-          cache: pnpm
-[% endif %]' >"$NODE_WORKFLOW"
-expect "a cache-only Jinja control after the unconditional version passes" 0 "toolchain-floors: ok"
+          node-version-file: .nvmrc' >"$NODE_WORKFLOW"
+expect "a repo-root action path still needs its own version" 1 "needs exactly one node-version input (found 0)"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
           node-version: ${{ vars.NODE_VERSION || '\''22'\'' }}' >"$NODE_WORKFLOW"
@@ -531,7 +512,7 @@ two_jobs '      - name: No setup action
         run: echo hello' '      - run: echo goodbye' >"$NODE_WORKFLOW"
 expect "a workflow with no Node setup steps fails" 1 "no actions/setup-node steps found"
 
-floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
+floors "$(task_floor 3.51.1 "$(declared_pin task "$TASK_WORKFLOW_PATH")")"
 two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
 expect "both Task workflow steps pass independently" 0 "toolchain-floors: ok"
 two_jobs "$task_good" '      - name: Set up Task
@@ -565,10 +546,10 @@ two_jobs "$task_good" '      - name: Set up Task
 expect "a version after the Task with mapping cannot stand in for with.version" 1 "needs exactly one version input (found 0)"
 [ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 1 ] || fail "only the valid Task input should be compared"
 two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
-adjacent_task_pin="$(declared_pin task 1 | jq -c '.pattern = "^\\s*- uses: arduino/setup-task@[^\\n]*\\n\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"')"
+adjacent_task_pin="$(declared_pin task "$TASK_WORKFLOW_PATH" | jq -c '.pattern = "^\\s*- uses: arduino/setup-task@[^\\n]*\\n\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"')"
 floors "$(task_floor 3.51.1 "$adjacent_task_pin")"
 expect "a pattern requiring adjacent uses and version fails across the real with line" 1 "needs exactly one recognized version version"
-floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
+floors "$(task_floor 3.51.1 "$(declared_pin task "$TASK_WORKFLOW_PATH")")"
 two_jobs "$task_good" '      - uses: arduino/setup-task@0000
       - uses: other/action@0000
         with:
@@ -580,20 +561,224 @@ two_jobs "$task_good" '      - uses: arduino/setup-task@0000
           version: 3.51.1' >"$TASK_WORKFLOW"
 expect "two versions in a single Task step fail" 1 "needs exactly one version input (found 2)"
 
-# Exercise the inventory independently of the published pin list. Give the
-# fixture both shared pins and the known workflow pins, then add another file.
-floors "$(node_floor 24 "${NODE_PIN},$(declared_pin node 1)"),$(task_floor 3.51.1 "${TASK_PIN},$(declared_pin task 1)")"
+# A job-level reusable-workflow input and a nested uses are not action steps.
+floors "$(task_floor 3.51.1 "$(declared_pin task "$TASK_WORKFLOW_PATH")")"
+cat >"$TASK_WORKFLOW" <<'EOF'
+jobs:
+  first:
+    steps:
+      - uses: arduino/setup-task@0000
+        with:
+          version: 3.51.1
+  reusable:
+    uses: owner/repo/.github/workflows/reusable.yml@main
+    with:
+      version: 1.0.0
+EOF
+expect "a reusable workflow input in a later job is not a Task pin" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 1 ] || fail "only the setup-task input should be compared"
+two_jobs "$task_good" '      - name: Not a setup action
+        env:
+          uses: arduino/setup-task@0000
+        with:
+          version: 1.0.0' >"$TASK_WORKFLOW"
+expect "a nested uses does not select a Task step" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 1 ] || fail "the nested uses must not select a Task input"
+two_jobs '      - uses: arduino/setup-task@0000
+        "with":
+          version: 3.51.1' '      - uses: arduino/setup-task@0000
+        with: &inputs
+          version: 3.51.1' >"$TASK_WORKFLOW"
+expect "quoted and anchored with mappings both select their Task input" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 2 ] || fail "both Task inputs should be compared"
+partial_task_pin="$(declared_pin task "$TASK_WORKFLOW_PATH" | jq -c '.pattern = "^([0-9]+\\.[0-9]+)"')"
+floors "$(task_floor 3.51 "$partial_task_pin")"
+expect "compare version rejects a partial capture of an otherwise valid value" 1 "needs exactly one recognized version version"
+grep -F ': 3.51 >= 3.51' "$out" >/dev/null || fail "fixture must capture a value that would meet the floor"
+
+# Inventory uses rendered workflow names, parsed action identities and the
+# exact input from the declaration.
+floors "$(node_floor 24 "${NODE_PIN},$(declared_pin node "$NODE_WORKFLOW_PATH")"),$(task_floor 3.51.1 "${TASK_PIN},$(declared_pin task "$TASK_WORKFLOW_PATH")")"
 two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
 two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
-check_step_inventory "$fx" || fail "the inventory rejected covered setup actions"
-two_jobs "$node_good" "$task_good" >"${WORKFLOW_DIR}/undeclared.yml"
-rc=0
-check_step_inventory "$fx" >"$out" 2>&1 || rc=$?
-[ "$rc" = 1 ] || fail "the inventory accepted an undeclared workflow"
-grep -F 'undeclared.yml: undeclared actions/setup-node step' "$out" >/dev/null ||
-    fail "the inventory missed the undeclared Node step"
-grep -F 'undeclared.yml: undeclared arduino/setup-task step' "$out" >/dev/null ||
+printf '%s\n' 'uses: actions/setup-node@0000' 'not YAML' >"$rendered/.github/workflows/example.md"
+expect "inventory ignores files that are not YAML workflows" 0 "toolchain-floors: ok" --inventory
+two_jobs '      - uses: "actions/\x73etup-node@0000"
+        with:
+          node-version: "24"' '      - run: echo hello' >"$rendered/.github/workflows/undeclared.yaml"
+two_jobs "$task_good" '      - run: echo hello' >"$rendered/.github/workflows/undeclared-task.yml"
+expect "inventory parses an escaped action name in a rendered .yaml file" 1 "undeclared actions/setup-node step with input node-version" --inventory
+grep -F 'undeclared arduino/setup-task step with input version' "$out" >/dev/null ||
     fail "the inventory missed the undeclared Task step"
+rm "$rendered/.github/workflows/undeclared.yaml" "$rendered/.github/workflows/undeclared-task.yml"
+wrong_node_pin="$(declared_pin node "$NODE_WORKFLOW_PATH" | jq -c '.step.input = "node-version-file"')"
+floors "$(node_floor 24 "${NODE_PIN},${wrong_node_pin}"),$(task_floor 3.51.1 "${TASK_PIN},$(declared_pin task "$TASK_WORKFLOW_PATH")")"
+expect "inventory rejects a declaration covering the wrong input" 1 "undeclared actions/setup-node step with input node-version" --inventory
+
+if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
+    render_failure() {
+        cat "$out" >&2
+        fail "$1"
+    }
+    echo "==> Copier renders the fixture and the standalone guard checks each rendered step"
+    e2e="$work/e2e"
+    e2e_workflow='.github/workflows/render-regressions.yml'
+    profile_workflow='.github/workflows/profile-specific.yml'
+    mkdir -p "$e2e/template/.github/workflows"
+    cp "$fx/toolchain-floors.schema.json" "$e2e"
+    e2e_pin="$(jq -c --arg file "$e2e_workflow" '.path = $file | .template_path = ("template/" + $file + ".jinja")' <<<"$NODE_PIN")"
+    profile_pin="$(jq -c --arg file "$profile_workflow" '.path = $file | .template_path = ("template/" + $file + ".jinja")' <<<"$NODE_PIN")"
+    printf '{"schema_version":2,"floors":[%s]}\n' "$(node_floor 24 "$e2e_pin,$profile_pin")" >"$e2e/toolchain-floors.json"
+    cat >"$e2e/copier.yml" <<'EOF'
+_subdirectory: template
+_envops:
+  block_start_string: "[%"
+  block_end_string: "%]"
+  variable_start_string: "[["
+  variable_end_string: "]]"
+  comment_start_string: "[#"
+  comment_end_string: "#]"
+  trim_blocks: true
+  lstrip_blocks: true
+setup_name:
+  type: str
+  default: node
+project_type:
+  type: str
+  default: base
+EOF
+    cat >"$e2e/template/$e2e_workflow.jinja" <<'EOF'
+jobs:
+  setup:
+    steps:
+      - uses: actions/setup-node@v6
+        with: &valid_inputs
+          node-version: "24"
+      - name: Conditional uses
+[% if setup_name == 'node' %]
+        uses: actions/setup-node@v6
+[% else %]
+        uses: owner/local-action@v1
+[% endif %]
+      - name: Conditional alias
+        uses: actions/setup-node@v6
+[% if setup_name != 'node' %]
+        with: *valid_inputs
+[% endif %]
+      - name: Substituted uses
+        uses: actions/setup-[[ setup_name ]]@v6
+      - name: Escaped uses
+        uses: "actions/\x73etup-node@v6"
+      - name: Commented pin
+        uses: actions/setup-node@v6
+        with:
+          # [#
+          node-version: "24"
+          # #]
+          node-version-file: .nvmrc
+      - name: Trailing control
+        uses: actions/setup-node@v6
+        with: # [% if setup_name != 'node' %]
+          node-version: "24"
+[% endif %]
+
+      - name: Repo-root uses
+        uses: actions/setup-node/.@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version:
+            "24.21.0"
+EOF
+    cat >"$e2e/template/$profile_workflow.jinja" <<'EOF'
+jobs:
+  setup:
+    steps:
+      - run: echo setup
+[% if project_type != 'web-app' %]
+      - uses: actions/setup-node@v6
+[% if project_type != 'iac' %]
+        with:
+          node-version: "24"
+[% endif %]
+[% endif %]
+EOF
+    iac_source="template/.github/workflows/[% if project_type == 'iac' %]iac-undeclared.yml[% endif %].jinja"
+    absent_source='template/.github/workflows/[% if false %]never-rendered.yml[% endif %].jinja'
+    cat >"$e2e/$iac_source" <<'EOF'
+jobs:
+  setup:
+    steps:
+      - uses: actions/setup-node@v6
+EOF
+    cp "$e2e/$iac_source" "$e2e/$absent_source"
+    sample='template/.github/workflows/examples/sample.yml.jinja'
+    mkdir -p "$(dirname "$e2e/$sample")"
+    cp "$e2e/$iac_source" "$e2e/$sample"
+    git -C "$e2e" init -q
+    git -C "$e2e" add .
+    git -C "$e2e" commit -qm fixture
+    rc=0
+    "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
+    task_profiles="$(yq -r '.tasks."test:template:all".deps[] | select(. != "test:template:update") | sub("^test:template:", "")' Taskfile.yml | sort)" ||
+        render_failure "could not enumerate the Taskfile's smoke profiles"
+    checked_profiles="$(sed -nE 's|^  ok +node .github/workflows/render-regressions\.yml .*\[([^]]+)\]:.*24 >= 24$|\1|p' "$out" | sort -u)" ||
+        render_failure "could not read the floor check's smoke profiles"
+    [ "$task_profiles" = "$checked_profiles" ] || render_failure "the floor matrix must check the same render profiles as test:template:all"
+    profile_count="$(wc -l <<<"$task_profiles")" || render_failure "could not count the Taskfile's smoke profiles"
+    reg_errors="$(grep -Ec 'render-regressions\.yml .*needs exactly one node-version input \(found 0\)' "$out" || true)"
+    profile_errors="$(grep -Ec '^toolchain-floors: node .github/workflows/profile-specific\.yml ' "$out" || true)"
+    if [ "$rc" != 1 ] ||
+        [ "$reg_errors" != "$((7 * profile_count))" ] ||
+        [ "$profile_errors" != 1 ] ||
+        ! grep -Eq 'profile-specific\.yml .*\[full\]:.+24 >= 24' "$out" ||
+        ! grep -Eq 'profile-specific\.yml .*\[iac\]:.+needs exactly one node-version input' "$out" ||
+        ! grep -Eq 'iac-undeclared\.yml \[iac\]:[0-9]+: undeclared actions/setup-node step' "$out" ||
+        ! grep -Fq "$absent_source: workflow or action source does not render in any checked profile" "$out" ||
+        grep -Fq 'examples/sample.yml' "$out"; then
+        render_failure "the render matrix must distinguish absent sources, absent steps, unpinned steps and nested samples"
+    fi
+
+    mkdir "$work/copier-bin"
+    printf 'trust: ["/"]\n' >"$work/ambient-copier.yml"
+    cat >"$work/copier-bin/copier" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+if [ "$1" = --version ]; then
+    echo 'copier fixture'
+else
+    [ "$(cat "$COPIER_SETTINGS_PATH")" = '{}' ]
+    if [ "$RENDER_FIXTURE" = empty ]; then
+        mkdir "${!#}"
+    fi
+fi
+EOF
+    chmod +x "$work/copier-bin/copier"
+    for state in missing empty; do
+        rc=0
+        PATH="$work/copier-bin:$PATH" COPIER_SETTINGS_PATH="$work/ambient-copier.yml" RENDER_FIXTURE="$state" \
+            "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
+        [ "$rc" = 1 ] && grep -Fq 'full: Copier render directory is missing or empty' "$out" ||
+            render_failure "the $state render must fail with the profile named and Copier settings isolated"
+    done
+
+    unsupported_sources=(
+        'template/.github/workflows/[% if true %]a.yml[% else %]b.yml[% endif %].jinja'
+        'template/.github/workflows/[[ setup_name ]].yml.jinja'
+        'template/.github/[% if false %]workflows[% endif %]/conditional-dir.yml.jinja'
+    )
+    for file in "${unsupported_sources[@]}"; do
+        mkdir -p "$(dirname "$e2e/$file")"
+        cp "$e2e/$iac_source" "$e2e/$file"
+        git -C "$e2e" add -- "$file"
+    done
+    rc=0
+    "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
+    [ "$rc" = 1 ] || render_failure "unsupported Jinja source names must fail closed"
+    for file in "${unsupported_sources[@]}"; do
+        grep -Fq "$file: unsupported Jinja in template source path" "$out" ||
+            render_failure "the unsupported name diagnostic must identify $file"
+    done
+fi
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
 nogit="${work}/nogit"
@@ -602,7 +787,7 @@ rm -rf "${nogit}/.git"
 floors "$(image_floor "$base")"
 cp "${fx}/toolchain-floors.json" "${nogit}/toolchain-floors.json"
 rc=0
-"$validator" --root "$nogit" >"$out" 2>&1 || rc=$?
+"$validator" --rendered "$rendered" --root "$nogit" >"$out" 2>&1 || rc=$?
 [ "$rc" = 1 ] || fail "ancestry outside a git repository must fail, got exit ${rc}"
 grep -F "unknown" "$out" >/dev/null || fail "ancestry outside a git repository must be unknown"
 
