@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.22.0](https://github.com/evanharmon1/harmon-init/compare/v5.21.0...v5.22.0) (2026-11-25)
+
+
+### Features
+
+* **deps:** opt Node pilots into the shared Renovate preset ([#2130](https://github.com/evanharmon1/harmon-init/issues/2130)) ([7e3291a](https://github.com/evanharmon1/harmon-init/commit/7e3291ae9c75a2133063830614e7f5a3ecdf6190))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 3461a6e2 ([#2082](https://github.com/evanharmon1/harmon-init/issues/2082)) ([ecef1cd](https://github.com/evanharmon1/harmon-init/commit/ecef1cd24432bd9b1a126bc4e572543f4ba3ef55))
+* **devcontainer:** update shared image to fa9196b2 ([#2131](https://github.com/evanharmon1/harmon-init/issues/2131)) ([d4dbaea](https://github.com/evanharmon1/harmon-init/commit/d4dbaea5f51dc21ec5b32db54259212077499940))
+* **setup-remote:** make the real-deadline test independent of host load ([#2127](https://github.com/evanharmon1/harmon-init/issues/2127)) ([3b6262b](https://github.com/evanharmon1/harmon-init/commit/3b6262b41e29f615acc7ed1e8b1c16fd1dc60a72))
+* **toolchain:** check the rendered YAML of covered template pins ([#2125](https://github.com/evanharmon1/harmon-init/issues/2125)) ([c003cc5](https://github.com/evanharmon1/harmon-init/commit/c003cc5ae9b4847b9578528524e2baa78900717c))
+
 ## [5.21.0](https://github.com/evanharmon1/harmon-init/compare/v5.20.0...v5.21.0) (2026-11-23)
 
 
