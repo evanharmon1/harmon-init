@@ -1345,9 +1345,12 @@ PYDEADWORKER
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
 echo "$$" >"${HOOK_TASK_PID}"
-# Finite: wait for the test's release, never for a signal.
+# Finite: wait for the test's release, never for a signal. The bound (2400 x
+# 0.05 s = 120 s) must outlast every hook the case runs before releasing, even
+# on a slow runner; at 20 s the stand-in could finish early and make the second
+# hook report "ended without a status" (#2133).
 n=0
-while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 400 ]; do
+while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 2400 ]; do
     sleep 0.05
     n=$((n + 1))
 done
@@ -1458,8 +1461,9 @@ PYSUPERVISOR
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
 echo "$$" >"${HOOK_TASK_PID}"
+# Same finite 120 s bound as the supervisor-death case above (#2133).
 n=0
-while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 400 ]; do
+while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 2400 ]; do
     sleep 0.05
     n=$((n + 1))
 done
