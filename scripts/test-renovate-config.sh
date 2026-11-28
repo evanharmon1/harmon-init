@@ -131,7 +131,7 @@ git show "refs/tags/$preset_tag:renovate/default.json" >"$fixture/tagged-preset.
 
 # Validate the dogfood layer and published preset before rendering profiles.
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.252.8
+RENOVATE_VALIDATOR_VERSION=44.263.0
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
     renovate-config-validator --strict renovate.json
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
