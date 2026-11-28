@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.22.1](https://github.com/evanharmon1/harmon-init/compare/v5.22.0...v5.22.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **setup-remote:** keep the supervisor-death stand-in alive until the test releases it ([#2133](https://github.com/evanharmon1/harmon-init/issues/2133)) ([#2134](https://github.com/evanharmon1/harmon-init/issues/2134)) ([378001a](https://github.com/evanharmon1/harmon-init/commit/378001a2b41aa8d6cf6d4f6f11955b6c0b0adfb3))
+
 ## [5.22.0](https://github.com/evanharmon1/harmon-init/compare/v5.21.0...v5.22.0) (2026-11-25)
 
 
