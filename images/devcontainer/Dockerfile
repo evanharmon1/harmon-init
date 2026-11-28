@@ -31,19 +31,19 @@ ARG TFLINT_SHA256_AMD64=22be11cadc25cd02401e94c0ccc91aa63467debb8485c2a755d98f4c
 ARG TFLINT_SHA256_ARM64=1105a0a5ddee7cdac7957a3475571a946b839192ea1bc0c722c6c4686001067e
 # pin-pair: tflint
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
-ARG ZELLIJ_VERSION=0.46.0
+ARG ZELLIJ_VERSION=0.46.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.283
+ARG WORKMUX_VERSION=0.1.284
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.25.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.330
+ARG CLAUDE_CODE_VERSION=2.1.332
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.114
+ARG COPILOT_VERSION=1.0.115
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.6.0
+ARG PI_VERSION=1.6.1
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=19.0.1
+ARG OH_MY_PI_VERSION=19.2.0
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -60,7 +60,7 @@ ARG OPENCODE_VERSION=1.19.6
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.39
+ARG AGENT_DECK_VERSION=1.16.40
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.29.0
@@ -72,7 +72,7 @@ ARG HERDR_VERSION=0.9.5
 # both stay installed. Apache-2.0. Binaries ship from releases.herdr.dev, not
 # GitHub release assets, so Renovate tracks the tag only.
 # renovate: datasource=github-tags depName=herdrdev/herdr-core extractVersion=^v?(?<version>.+)$
-ARG HERDR_CORE_VERSION=0.1.21
+ARG HERDR_CORE_VERSION=0.1.22
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
@@ -113,7 +113,7 @@ ARG GH_DASH_VERSION=4.26.3
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=2.0.2
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
-ARG ONEFETCH_VERSION=3.2.0
+ARG ONEFETCH_VERSION=3.3.0
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
